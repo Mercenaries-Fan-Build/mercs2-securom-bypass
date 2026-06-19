@@ -95,10 +95,16 @@ pub fn inject_pmc_bb_dll(exe_data: &[u8]) -> Result<Vec<u8>, String> {
     }
 
     // Find the section containing the import table
-    let sections_offset = pe_offset + 24 + 20; // After PE signature + COFF header
+    // Sections come after PE signature + COFF header + Optional header
+    let optional_header_size = u16::from_le_bytes([
+        data[pe_offset + 4 + 16],
+        data[pe_offset + 4 + 17],
+    ]) as usize;
+
+    let sections_offset = pe_offset + 4 + 20 + optional_header_size;
     let num_sections = u16::from_le_bytes([
-        data[pe_offset + 6],
-        data[pe_offset + 7],
+        data[pe_offset + 4 + 6],
+        data[pe_offset + 4 + 7],
     ]) as usize;
 
     let mut import_section_offset = None;
