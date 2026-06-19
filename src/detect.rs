@@ -2,65 +2,72 @@ use sha2::{Sha256, Digest};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExeVersion {
-    V10,
+    /// v1.0 retail, unsigned (16,846,848 bytes — original disc)
+    V10Unsigned,
+    /// v1.0 retail, EA-signed (17,122,568 bytes — Authenticode overlay)
+    V10Signed,
+    /// v1.1 retail full update (53,944,080 bytes)
     V11,
+    /// Already cracked (53,482,288 bytes — imports pmc_bb.dll)
+    Cracked,
 }
 
-// Known SHA-256 hashes for retail versions (empirically verified)
-// Note: v1.0 retail exists in two forms:
-// - Unsigned (16.8 MB): original retail disc
-// - EA-signed (17.1 MB): official signed version with Authenticode signature
-const SHA256_V10_KNOWN: &[&str] = &[
-    "7d9b8debfdd033d599073d69f9c6b29a", // v1.0 unsigned (16.8 MB)
-    "596efbf5e6c88924acef1fd8b0891012", // v1.0 EA-signed (17.1 MB) - identical code, just Authenticode overlay
-    "ada5545526c4d09d8000f0e7600c0cbc", // v1.0 unsigned variant (16.8 MB)
-];
-const SHA256_V11_KNOWN: &[&str] = &[
-    // v1.1 retail EXE hashes (to be discovered and added)
-];
+// Known SHA-256 hashes (empirically verified against storage/ corpus).
+const SHA256_V10_UNSIGNED: &str =
+    "ada5545526c4d09d8000f0e7600c0cbc24b7b360638fa2dde407cd7f976534d7";
+const SHA256_V10_SIGNED: &str =
+    "a1532b4c7652fe9feee1191f5bd04aa073cd0f036e49831c754e7d895241dfa8";
+const SHA256_V11: &str =
+    "7a348847e103d71e8c17e7a51a0f3b4d4422e0c9cb46ec6acc9fe5e4e6be36b5";
+const SHA256_CRACKED: &str =
+    "958eb22776067c2dbb7d684e472c5045d419ec0ecfb49bfea7d23fcf4a83f115";
 
-// Fallback size-based detection: ranges that account for build variants
-// v1.0 sizes observed:
-//   - 16,846,848 bytes (unsigned retail disc)
-//   - 17,122,568 bytes (EA-signed with Authenticode overlay)
-// v1.1 sizes observed:
-//   - ~53.9 MB (patched but not cracked)
-const V10_SIZE_MIN: usize = 16_500_000;  // 16.5 MB (conservative floor)
-const V10_SIZE_MAX: usize = 17_500_000;  // 17.5 MB (covers both unsigned + signed variants)
-const V11_SIZE_MIN: usize = 53_000_000;  // 53.0 MB (conservative floor)
-const V11_SIZE_MAX: usize = 54_000_000;  // 54.0 MB (conservative ceiling)
+// Fallback size-based detection (used only when the hash is unrecognized).
+const SIZE_V10_UNSIGNED: usize = 16_846_848;
+const SIZE_V10_SIGNED: usize = 17_122_568;
+const SIZE_V11: usize = 53_944_080;
+const SIZE_CRACKED: usize = 53_482_288;
 
 pub fn detect_version(exe_data: &[u8]) -> Result<ExeVersion, String> {
+    let hash = compute_sha256(exe_data);
+
+    // Hash-based detection (exact, preferred).
+    match hash.as_str() {
+        SHA256_V10_UNSIGNED => return Ok(ExeVersion::V10Unsigned),
+        SHA256_V10_SIGNED => return Ok(ExeVersion::V10Signed),
+        SHA256_V11 => return Ok(ExeVersion::V11),
+        SHA256_CRACKED => return Ok(ExeVersion::Cracked),
+        _ => {}
+    }
+
+    // Size-based fallback for unrecognized builds (regional variants, etc.).
+    // Patches are byte-specific, so this is best-effort and will warn.
     let size = exe_data.len();
+    let guess = match size {
+        SIZE_V10_UNSIGNED => Some(ExeVersion::V10Unsigned),
+        SIZE_V10_SIGNED => Some(ExeVersion::V10Signed),
+        SIZE_V11 => Some(ExeVersion::V11),
+        SIZE_CRACKED => Some(ExeVersion::Cracked),
+        _ => None,
+    };
 
-    // Try hash-based detection first (if we have known hashes)
-    if !SHA256_V10_KNOWN.is_empty() || !SHA256_V11_KNOWN.is_empty() {
-        let hash = compute_sha256(exe_data);
-        let hash_lower = hash.to_lowercase();
-
-        if SHA256_V10_KNOWN.iter().any(|h| h.to_lowercase() == hash_lower) {
-            return Ok(ExeVersion::V10);
-        }
-        if SHA256_V11_KNOWN.iter().any(|h| h.to_lowercase() == hash_lower) {
-            return Ok(ExeVersion::V11);
-        }
-    }
-
-    // Fallback to size-based detection (range-based to account for build variants)
-    if size >= V10_SIZE_MIN && size <= V10_SIZE_MAX {
-        return Ok(ExeVersion::V10);
-    }
-    if size >= V11_SIZE_MIN && size <= V11_SIZE_MAX {
-        return Ok(ExeVersion::V11);
+    if let Some(v) = guess {
+        eprintln!(
+            "[!] Unrecognized SHA-256 ({}) but size matches {:?}.\n\
+             [!] This is an unknown build — patching may produce a corrupt EXE.",
+            hash, v
+        );
+        return Ok(v);
     }
 
     Err(format!(
-        "Unable to detect EXE version. Size: {} bytes\n\
-         Expected v1.0: {}-{} bytes\n\
-         Expected v1.1: {}-{} bytes\n\
-         Please add the SHA-256 hash to improve detection: {}",
-        size, V10_SIZE_MIN, V10_SIZE_MAX, V11_SIZE_MIN, V11_SIZE_MAX,
-        compute_sha256(exe_data)
+        "Unable to detect EXE version.\n  size: {} bytes\n  sha256: {}\n\
+         Known inputs:\n\
+         \x20 v1.0 unsigned: {} bytes\n\
+         \x20 v1.0 signed:   {} bytes\n\
+         \x20 v1.1 retail:   {} bytes\n\
+         \x20 cracked:       {} bytes",
+        size, hash, SIZE_V10_UNSIGNED, SIZE_V10_SIGNED, SIZE_V11, SIZE_CRACKED
     ))
 }
 
