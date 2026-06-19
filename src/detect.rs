@@ -13,6 +13,7 @@ pub enum ExeVersion {
 const SHA256_V10_KNOWN: &[&str] = &[
     "7d9b8debfdd033d599073d69f9c6b29a", // v1.0 unsigned (16.8 MB)
     "596efbf5e6c88924acef1fd8b0891012", // v1.0 EA-signed (17.1 MB) - identical code, just Authenticode overlay
+    "ada5545526c4d09d8000f0e7600c0cbc", // v1.0 unsigned variant (16.8 MB)
 ];
 const SHA256_V11_KNOWN: &[&str] = &[
     // v1.1 retail EXE hashes (to be discovered and added)

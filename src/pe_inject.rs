@@ -90,6 +90,9 @@ pub fn inject_pmc_bb_dll(exe_data: &[u8]) -> Result<Vec<u8>, String> {
         data[import_table_rva_offset + 3],
     ]) as usize;
 
+    eprintln!("[DEBUG] Magic: 0x{:x}, Data dir offset: {}, RVA offset: {}, RVA: {}",
+        magic, data_dir_offset, import_table_rva_offset, import_table_rva);
+
     if import_table_rva == 0 {
         return Err("No import table found in executable (RVA is 0)".to_string());
     }
@@ -103,9 +106,12 @@ pub fn inject_pmc_bb_dll(exe_data: &[u8]) -> Result<Vec<u8>, String> {
 
     let sections_offset = pe_offset + 4 + 20 + optional_header_size;
     let num_sections = u16::from_le_bytes([
-        data[pe_offset + 4 + 6],
-        data[pe_offset + 4 + 7],
+        data[pe_offset + 4 + 2],  // NumberOfSections is at offset +2 in COFF header
+        data[pe_offset + 4 + 3],
     ]) as usize;
+
+    eprintln!("[DEBUG] PE offset: {}, Optional header size: {}, Sections offset: {}, Num sections: {}",
+        pe_offset, optional_header_size, sections_offset, num_sections);
 
     let mut import_section_offset = None;
     for i in 0..num_sections {
@@ -142,7 +148,11 @@ pub fn inject_pmc_bb_dll(exe_data: &[u8]) -> Result<Vec<u8>, String> {
             data[section_offset + 23],
         ]) as usize;
 
+        eprintln!("[DEBUG] Section {}: virt_addr={}, virt_size={}, raw_offset={}, raw_size={}",
+            i, virt_addr, virt_size, raw_offset, raw_size);
+
         if virt_addr <= import_table_rva && import_table_rva < virt_addr + virt_size {
+            eprintln!("[DEBUG] Found import section: {} (contains RVA {})", i, import_table_rva);
             import_section_offset = Some((raw_offset, virt_addr, raw_size));
             break;
         }
@@ -152,6 +162,9 @@ pub fn inject_pmc_bb_dll(exe_data: &[u8]) -> Result<Vec<u8>, String> {
         .ok_or_else(|| "Could not find import table section".to_string())?;
 
     let import_offset = raw_offset + (import_table_rva - virt_addr);
+    eprintln!("[DEBUG] Import offset: {} (raw: {}, virt_addr: {}, rva: {})",
+        import_offset, raw_offset, virt_addr, import_table_rva);
+    eprintln!("[DEBUG] File size: {}, Import section size: {}", data.len(), data.len() - raw_offset);
 
     // Find the end of the import table (look for NULL descriptor)
     let mut descriptor_offset = import_offset;
@@ -159,11 +172,14 @@ pub fn inject_pmc_bb_dll(exe_data: &[u8]) -> Result<Vec<u8>, String> {
 
     loop {
         if descriptor_offset + 20 > data.len() {
-            return Err("Import table extends beyond file".to_string());
+            eprintln!("[DEBUG] Reached EOF at offset {}, tried to read 20 bytes from {}", data.len(), descriptor_offset);
+            eprintln!("[DEBUG] Read {} import descriptors before EOF", descriptor_count);
+            return Err(format!("Import table extends beyond file (at offset {}, descriptors: {})", descriptor_offset, descriptor_count));
         }
 
         // Check if this is a NULL descriptor
         if data[descriptor_offset..descriptor_offset + 20].iter().all(|&b| b == 0) {
+            eprintln!("[DEBUG] Found NULL descriptor at offset {}, total descriptors: {}", descriptor_offset, descriptor_count);
             break;
         }
 
