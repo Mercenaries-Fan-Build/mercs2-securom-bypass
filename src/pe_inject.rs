@@ -3,7 +3,6 @@ const DOS_HEADER_SIZE: usize = 64;
 const PE_SIGNATURE_OFFSET: usize = 0x3C;
 const PE_SIGNATURE: &[u8] = b"PE\0\0";
 const OPTIONAL_HEADER_OFFSET: usize = 24;
-const IMPORT_TABLE_RVA_OFFSET: usize = 104; // In Optional Header
 
 // IMAGE_IMPORT_DESCRIPTOR structure
 #[repr(C)]
@@ -62,14 +61,38 @@ pub fn inject_pmc_bb_dll(exe_data: &[u8]) -> Result<Vec<u8>, String> {
         return Err("Invalid PE signature".to_string());
     }
 
-    // Get the import table RVA from Optional Header
-    let import_table_rva_offset = pe_offset + OPTIONAL_HEADER_OFFSET + IMPORT_TABLE_RVA_OFFSET;
+    // Get Optional Header magic to determine 32-bit vs 64-bit
+    let magic_offset = pe_offset + OPTIONAL_HEADER_OFFSET;
+    if magic_offset + 2 > data.len() {
+        return Err("Cannot read Optional Header magic".to_string());
+    }
+    let magic = u16::from_le_bytes([data[magic_offset], data[magic_offset + 1]]);
+
+    // Data Directories offset varies by architecture
+    // PE32 (0x10b): Data Directories start at offset 96
+    // PE32+ (0x20b): Data Directories start at offset 112
+    let data_dir_offset = match magic {
+        0x10b => 96,  // PE32 (32-bit)
+        0x20b => 112, // PE32+ (64-bit)
+        _ => return Err(format!("Unknown PE magic: 0x{:x}", magic)),
+    };
+
+    // Get the import table RVA from Optional Header Data Directories
+    let import_table_rva_offset = pe_offset + OPTIONAL_HEADER_OFFSET + data_dir_offset;
+    if import_table_rva_offset + 4 > data.len() {
+        return Err("Invalid import table offset in Optional Header".to_string());
+    }
+
     let import_table_rva = u32::from_le_bytes([
         data[import_table_rva_offset],
         data[import_table_rva_offset + 1],
         data[import_table_rva_offset + 2],
         data[import_table_rva_offset + 3],
     ]) as usize;
+
+    if import_table_rva == 0 {
+        return Err("No import table found in executable (RVA is 0)".to_string());
+    }
 
     // Find the section containing the import table
     let sections_offset = pe_offset + 24 + 20; // After PE signature + COFF header
