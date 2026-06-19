@@ -13,27 +13,10 @@ pub fn apply_securom_bypass_patch(exe_data: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 fn apply_patch(old: &[u8], patch: &[u8], description: &str) -> Result<Vec<u8>, String> {
-    eprintln!("[DEBUG] Patch starts with: {:?}", &patch[..std::cmp::min(16, patch.len())]);
-    eprintln!("[DEBUG] Old size: {}, Patch size: {}", old.len(), patch.len());
-
     let mut new = Vec::new();
-    match qbsdiff::Bspatch::new(patch) {
-        Ok(patcher) => {
-            eprintln!("[DEBUG] Patch parsed successfully");
-            match patcher.apply(old, Cursor::new(&mut new)) {
-                Ok(_) => {
-                    eprintln!("[DEBUG] Patch applied, new size: {}", new.len());
-                    Ok(new)
-                }
-                Err(e) => {
-                    eprintln!("[DEBUG] Apply error: {} (type: {})", e, std::any::type_name_of_val(&e));
-                    Err(format!("Failed to apply {}: {}", description, e))
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("[DEBUG] Parse error: {}", e);
-            Err(format!("Failed to parse {} patch: {}", description, e))
-        }
-    }
+    qbsdiff::Bspatch::new(patch)
+        .map_err(|e| format!("Failed to parse {} patch: {}", description, e))?
+        .apply(old, Cursor::new(&mut new))
+        .map_err(|e| format!("Failed to apply {}: {}", description, e))?;
+    Ok(new)
 }
